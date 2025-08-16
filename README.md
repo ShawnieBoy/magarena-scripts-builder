@@ -29,8 +29,8 @@ Please make sure the required files are present in the ``INPUT`` folder (see bel
     private static final String IMAGE_UPDATE_ERROR_LOG = "SkippedInvalidImageScripts.log";
 
     // Required. Place this file in the INPUT_FOLDER.
-    // It is obtained from mtgjson.com. It contains every card grouped by set.
-    private static final String JSON_FILE = "AllPrintings.json";
+    // It is obtained from mtgjson.com. It contains data for each unique card.
+    private static final String JSON_FILE = "AtomicCards.json";
 
     // Required. Place this file in the INPUT_FOLDER.
     // This is a list of the cards which have not yet been implemented in Magarena.
