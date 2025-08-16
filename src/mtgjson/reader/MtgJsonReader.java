@@ -182,21 +182,28 @@ public class MtgJsonReader {
 
             final JsonParser parser = new JsonParser();
             final JsonElement element = parser.parse(reader);
+            final JsonObject data = element.getAsJsonObject().getAsJsonObject("data");
 
-            // list of set codes sorted by release date (map key) descending.
-            final SortedMap<String, String> sortedSetCodes =
-                    getSetCodesSortedByReleaseDateDesc(getSetCodes(), element);
-
-            // save list of set codes for reference.
-            logSetCodes(sortedSetCodes);
             loadMtgInfoSetsMap();
 
-            for (Entry<String, String> entrySet : sortedSetCodes.entrySet()) {
-                final String jsonSetCode = entrySet.getValue();
-                if (isValidSetCode(jsonSetCode)) {
-                    final JsonObject jsonSetObject = element.getAsJsonObject().get(jsonSetCode).getAsJsonObject();
-                    final String setCode = getSetCode(jsonSetCode);
-                    extractCardDataFromJson(jsonSetObject.getAsJsonArray("cards"), setCode);
+            for (Entry<String, JsonElement> entry : data.entrySet()) {
+                final JsonArray cards = entry.getValue().getAsJsonArray();
+                for (JsonElement cardElem : cards) {
+                    final JsonObject jsonCard = cardElem.getAsJsonObject();
+                    final JsonArray printings = jsonCard.getAsJsonArray("printings");
+                    String setCode = null;
+                    if (printings != null) {
+                        for (JsonElement printing : printings) {
+                            final String code = printing.getAsString();
+                            if (isValidSetCode(code)) {
+                                setCode = getSetCode(code);
+                                break;
+                            }
+                        }
+                    }
+                    if (setCode != null) {
+                        extractCardDataFromJson(jsonCard, setCode);
+                    }
                 }
             }
 
@@ -204,18 +211,14 @@ public class MtgJsonReader {
 
     }
 
-    private static void extractCardDataFromJson(final JsonArray cards, final String setCode) {
+    private static void extractCardDataFromJson(final JsonObject jsonCard, final String setCode) {
 
-        for (JsonElement jsonCardElement : cards) {
+        String key = CardData.getId(jsonCard);
 
-            JsonObject jsonCard = (JsonObject) jsonCardElement;
-            String key = CardData.getId(jsonCard);
-
-            if (!mtgcomCards.containsKey(key) && CardData.isValid(jsonCard)) {
-                CardData card = new CardData(jsonCard, setCode);
-                mtgcomCards.put(key, card);
-                cardImageLink.put(card.getFilename(), card.getImageUrl());
-            }
+        if (!mtgcomCards.containsKey(key) && CardData.isValid(jsonCard)) {
+            CardData card = new CardData(jsonCard, setCode);
+            mtgcomCards.put(key, card);
+            cardImageLink.put(card.getFilename(), card.getImageUrl());
         }
     }
 
@@ -303,46 +306,9 @@ public class MtgJsonReader {
         }
     }
 
-    private static void logSetCodes(final Map<String, String> sortedSetCodes) {
-        final File textFile = getOutputPath().resolve(JSON_SETS_FILE).toFile();
-        try (final PrintWriter writer = new PrintWriter(textFile)) {
-            for (Entry<String, String> entrySet : sortedSetCodes.entrySet()) {
-                final String key = entrySet.getKey();
-                final String jsonSetCode = entrySet.getValue();
-                final boolean isValidSetCode = isValidSetCode(jsonSetCode);
-                final String setCode = getSetCode(jsonSetCode);
-                if (isValidSetCode) {
-                    if (setCode.equalsIgnoreCase(jsonSetCode)) {
-                        writer.printf("%s\n", key);
-                    } else {
-                        writer.printf("%s -> %s\n", key, setCode);
-                    }
-                }
-            }
-        } catch (FileNotFoundException e) {
-            throw new RuntimeException(e);
-        }
-//        System.out.printf("-> Processing %d sets in release date reverse order (see \\results\\%s)\n",
-//                sortedSetCodes.size(), JSON_SETS_FILE);
-    }
-
     private static boolean isValidSetCode(final String setCode) {
         return validSetCodes.contains(setCode) && !invalidSetCodes.contains(setCode);
 
-    }
-
-    private static SortedMap<String, String> getSetCodesSortedByReleaseDateDesc(final String[] setCodes, final JsonElement element) {
-        final SortedMap<String, String> sortedSetCodes = new TreeMap<>(Collections.reverseOrder());
-        for (String setCode : setCodes) {
-            final JsonObject setObject = element.getAsJsonObject().get(setCode).getAsJsonObject();
-            final JsonElement releaseDate = setObject.get("releaseDate");
-            if (releaseDate != null && !releaseDate.isJsonNull()) {
-                final String setReleaseDate = releaseDate.getAsString();
-                final String key = setReleaseDate + " " + setCode;
-                sortedSetCodes.put(key, setCode);
-            }
-        }
-        return sortedSetCodes;
     }
 
     /**
@@ -438,84 +404,6 @@ public class MtgJsonReader {
 
     private static String getCardImageUrl(final String scriptFilename, final String defaultUrl) {
         return predefinedCardImages.containsKey(scriptFilename) ? predefinedCardImages.get(scriptFilename) : defaultUrl;
-    }
-
-    private static String[] getSetCodes() throws IOException {
-        FileReader fileReader = new FileReader(getJsonFile());
-        JsonReader reader = new JsonReader(fileReader);
-        handleObject(reader);
-        return setCodesList.toArray(new String[setCodesList.size()]);
-    }
-
-    /**
-     * Handle an Object. Consume the first token which is BEGIN_OBJECT. Within
-     * the Object there could be array or non array tokens. We write handler
-     * methods for both. Noe the peek() method. It is used to find out the type
-     * of the next token without actually consuming it.
-     *
-     * @param reader
-     * @throws IOException
-     */
-    private static void handleObject(JsonReader reader) throws IOException {
-        reader.beginObject();
-        while (reader.hasNext()) {
-            JsonToken token = reader.peek();
-            if (token == JsonToken.BEGIN_ARRAY) {
-                handleArray(reader);
-            } else if (token == JsonToken.END_ARRAY) {
-                reader.endObject();
-                return;
-            } else {
-                handleNonArrayToken(reader, token);
-            }
-        }
-
-    }
-
-    /**
-     * Handle a json array. The first token would be JsonToken.BEGIN_ARRAY.
-     * Arrays may contain objects or primitives.
-     *
-     * @param reader
-     * @throws IOException
-     */
-    public static void handleArray(JsonReader reader) throws IOException {
-        reader.beginArray();
-        while (true) {
-            JsonToken token = reader.peek();
-            if (token == JsonToken.END_ARRAY) {
-                reader.endArray();
-                break;
-            } else if (token == JsonToken.BEGIN_OBJECT) {
-                handleObject(reader);
-            } else {
-                handleNonArrayToken(reader, token);
-            }
-        }
-    }
-
-    /**
-     * Handle non array non object tokens
-     *
-     * @param reader
-     * @param token
-     * @throws IOException
-     */
-    public static void handleNonArrayToken(JsonReader reader, JsonToken token) throws IOException {
-        switch (token) {
-            case NAME:
-                setCodesList.add(reader.nextName());
-                break;
-            case STRING:
-                System.out.println(reader.nextString());
-                break;
-            case NUMBER:
-                System.out.println(reader.nextDouble());
-                break;
-            default:
-                reader.skipValue();
-                break;
-        }
     }
 
     /**
