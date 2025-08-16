@@ -32,10 +32,17 @@ class CardData {
     }
 
     public static String getRarity(final JsonObject card) {
-        return card.get("rarity").getAsString().substring(0, 1).toUpperCase();
+        if (!card.has("rarity")) {
+            return "";
+        }
+        String rarity = card.get("rarity").getAsString();
+        return rarity.isEmpty() ? "" : rarity.substring(0, 1).toUpperCase();
     }
 
     public static boolean isValid(final JsonObject jsonCard) {
+        if (!jsonCard.has("rarity")) {
+            return false;
+        }
         return !getRarity(jsonCard).contentEquals("S") &&
             (jsonCard.has("number") || jsonCard.has("multiverseid"));
     }
@@ -245,6 +252,7 @@ class CardData {
         }
     }
 
+    // rarity presence is verified by CardData.isValid before construction
     private void extractRarity(final JsonObject json) {
         rarity = getRarity(json);
     }
