@@ -4,8 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.stream.JsonReader;
-import com.google.gson.stream.JsonToken;
 import org.apache.commons.io.FileUtils;
 
 import java.io.*;
@@ -44,7 +42,7 @@ public class MtgJsonReader {
     private static final String IMAGE_UPDATE_ERROR_LOG = "SkippedInvalidImageScripts.log";
 
     // Required. Place this file in the INPUT_FOLDER.
-    // It is obtained from mtgjson.com. It contains every card grouped by set.
+    // It is obtained from mtgjson.com. It contains card data keyed by card name.
     private static final String JSON_FILE = "AllPrintings.json";
 
     // Required. Place this file in the INPUT_FOLDER.
@@ -63,10 +61,6 @@ public class MtgJsonReader {
     // Use this file to override the automatically generated image link for a given script file.
     // This is applies to both the scripts generator and image line batch updater.
     private static final String PREDEFINED_IMAGES_FILE = "CardImages.txt";
-
-    // This file is automatically created in the OUTPUT_FOLDER (for reference only).
-    // list of all set codes from json feed sorted by release date in descending order.
-    private static final String JSON_SETS_FILE = "JsonSetCodes.txt";
 
     // Set codes to be ignored in the json feed - no card data will be used from these sets.
     // Emphasis is on using base sets for extra language support.
@@ -98,7 +92,6 @@ public class MtgJsonReader {
 
     private static final String ERRORS_FILE = "errors.txt";
 
-    private static final List<String> setCodesList = new ArrayList<>();
     private static final HashMap<String, CardData> mtgcomCards = new HashMap<>();
     private static final List<String> magarenaMissingCards = new ArrayList<>();
     private static final HashMap<String, String> mtginfoSetsMap = new HashMap<>();
@@ -168,8 +161,9 @@ public class MtgJsonReader {
     /**
      * Loads the data from JSON_FILE using google gson library.
      * <p>
-     * The data is stored by card set so in order to get all cards you have to
-     * step through each set and pick out any new unique cards.
+     * The data is stored by card name, each containing an array of card objects
+     * representing different printings. For each card we choose the first
+     * printing from a valid set and extract its data.
      */
     private static void loadJsonData() throws IOException {
 
@@ -182,21 +176,28 @@ public class MtgJsonReader {
 
             final JsonParser parser = new JsonParser();
             final JsonElement element = parser.parse(reader);
+            final JsonObject data = element.getAsJsonObject().getAsJsonObject("data");
 
-            // list of set codes sorted by release date (map key) descending.
-            final SortedMap<String, String> sortedSetCodes =
-                    getSetCodesSortedByReleaseDateDesc(getSetCodes(), element);
-
-            // save list of set codes for reference.
-            logSetCodes(sortedSetCodes);
             loadMtgInfoSetsMap();
 
-            for (Entry<String, String> entrySet : sortedSetCodes.entrySet()) {
-                final String jsonSetCode = entrySet.getValue();
-                if (isValidSetCode(jsonSetCode)) {
-                    final JsonObject jsonSetObject = element.getAsJsonObject().get(jsonSetCode).getAsJsonObject();
-                    final String setCode = getSetCode(jsonSetCode);
-                    extractCardDataFromJson(jsonSetObject.getAsJsonArray("cards"), setCode);
+            for (Entry<String, JsonElement> entry : data.entrySet()) {
+                final JsonArray cards = entry.getValue().getAsJsonArray();
+                for (JsonElement cardElem : cards) {
+                    final JsonObject jsonCard = cardElem.getAsJsonObject();
+                    final JsonArray printings = jsonCard.getAsJsonArray("printings");
+                    String setCode = null;
+                    if (printings != null) {
+                        for (JsonElement printing : printings) {
+                            final String code = printing.getAsString();
+                            if (isValidSetCode(code)) {
+                                setCode = getSetCode(code);
+                                break;
+                            }
+                        }
+                    }
+                    if (setCode != null) {
+                        extractCardDataFromJson(jsonCard, setCode);
+                    }
                 }
             }
 
@@ -204,18 +205,14 @@ public class MtgJsonReader {
 
     }
 
-    private static void extractCardDataFromJson(final JsonArray cards, final String setCode) {
+    private static void extractCardDataFromJson(final JsonObject jsonCard, final String setCode) {
 
-        for (JsonElement jsonCardElement : cards) {
+        String key = CardData.getId(jsonCard);
 
-            JsonObject jsonCard = (JsonObject) jsonCardElement;
-            String key = CardData.getId(jsonCard);
-
-            if (!mtgcomCards.containsKey(key) && CardData.isValid(jsonCard)) {
-                CardData card = new CardData(jsonCard, setCode);
-                mtgcomCards.put(key, card);
-                cardImageLink.put(card.getFilename(), card.getImageUrl());
-            }
+        if (!mtgcomCards.containsKey(key) && CardData.isValid(jsonCard)) {
+            CardData card = new CardData(jsonCard, setCode);
+            mtgcomCards.put(key, card);
+            cardImageLink.put(card.getFilename(), card.getImageUrl());
         }
     }
 
@@ -303,46 +300,9 @@ public class MtgJsonReader {
         }
     }
 
-    private static void logSetCodes(final Map<String, String> sortedSetCodes) {
-        final File textFile = getOutputPath().resolve(JSON_SETS_FILE).toFile();
-        try (final PrintWriter writer = new PrintWriter(textFile)) {
-            for (Entry<String, String> entrySet : sortedSetCodes.entrySet()) {
-                final String key = entrySet.getKey();
-                final String jsonSetCode = entrySet.getValue();
-                final boolean isValidSetCode = isValidSetCode(jsonSetCode);
-                final String setCode = getSetCode(jsonSetCode);
-                if (isValidSetCode) {
-                    if (setCode.equalsIgnoreCase(jsonSetCode)) {
-                        writer.printf("%s\n", key);
-                    } else {
-                        writer.printf("%s -> %s\n", key, setCode);
-                    }
-                }
-            }
-        } catch (FileNotFoundException e) {
-            throw new RuntimeException(e);
-        }
-//        System.out.printf("-> Processing %d sets in release date reverse order (see \\results\\%s)\n",
-//                sortedSetCodes.size(), JSON_SETS_FILE);
-    }
-
     private static boolean isValidSetCode(final String setCode) {
         return validSetCodes.contains(setCode) && !invalidSetCodes.contains(setCode);
 
-    }
-
-    private static SortedMap<String, String> getSetCodesSortedByReleaseDateDesc(final String[] setCodes, final JsonElement element) {
-        final SortedMap<String, String> sortedSetCodes = new TreeMap<>(Collections.reverseOrder());
-        for (String setCode : setCodes) {
-            final JsonObject setObject = element.getAsJsonObject().get(setCode).getAsJsonObject();
-            final JsonElement releaseDate = setObject.get("releaseDate");
-            if (releaseDate != null && !releaseDate.isJsonNull()) {
-                final String setReleaseDate = releaseDate.getAsString();
-                final String key = setReleaseDate + " " + setCode;
-                sortedSetCodes.put(key, setCode);
-            }
-        }
-        return sortedSetCodes;
     }
 
     /**
@@ -438,84 +398,6 @@ public class MtgJsonReader {
 
     private static String getCardImageUrl(final String scriptFilename, final String defaultUrl) {
         return predefinedCardImages.containsKey(scriptFilename) ? predefinedCardImages.get(scriptFilename) : defaultUrl;
-    }
-
-    private static String[] getSetCodes() throws IOException {
-        FileReader fileReader = new FileReader(getJsonFile());
-        JsonReader reader = new JsonReader(fileReader);
-        handleObject(reader);
-        return setCodesList.toArray(new String[setCodesList.size()]);
-    }
-
-    /**
-     * Handle an Object. Consume the first token which is BEGIN_OBJECT. Within
-     * the Object there could be array or non array tokens. We write handler
-     * methods for both. Noe the peek() method. It is used to find out the type
-     * of the next token without actually consuming it.
-     *
-     * @param reader
-     * @throws IOException
-     */
-    private static void handleObject(JsonReader reader) throws IOException {
-        reader.beginObject();
-        while (reader.hasNext()) {
-            JsonToken token = reader.peek();
-            if (token == JsonToken.BEGIN_ARRAY) {
-                handleArray(reader);
-            } else if (token == JsonToken.END_ARRAY) {
-                reader.endObject();
-                return;
-            } else {
-                handleNonArrayToken(reader, token);
-            }
-        }
-
-    }
-
-    /**
-     * Handle a json array. The first token would be JsonToken.BEGIN_ARRAY.
-     * Arrays may contain objects or primitives.
-     *
-     * @param reader
-     * @throws IOException
-     */
-    public static void handleArray(JsonReader reader) throws IOException {
-        reader.beginArray();
-        while (true) {
-            JsonToken token = reader.peek();
-            if (token == JsonToken.END_ARRAY) {
-                reader.endArray();
-                break;
-            } else if (token == JsonToken.BEGIN_OBJECT) {
-                handleObject(reader);
-            } else {
-                handleNonArrayToken(reader, token);
-            }
-        }
-    }
-
-    /**
-     * Handle non array non object tokens
-     *
-     * @param reader
-     * @param token
-     * @throws IOException
-     */
-    public static void handleNonArrayToken(JsonReader reader, JsonToken token) throws IOException {
-        switch (token) {
-            case NAME:
-                setCodesList.add(reader.nextName());
-                break;
-            case STRING:
-                System.out.println(reader.nextString());
-                break;
-            case NUMBER:
-                System.out.println(reader.nextDouble());
-                break;
-            default:
-                reader.skipValue();
-                break;
-        }
     }
 
     /**

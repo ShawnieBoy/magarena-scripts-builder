@@ -29,7 +29,7 @@ Please make sure the required files are present in the ``INPUT`` folder (see bel
     private static final String IMAGE_UPDATE_ERROR_LOG = "SkippedInvalidImageScripts.log";
 
     // Required. Place this file in the INPUT_FOLDER.
-    // It is obtained from mtgjson.com. It contains every card grouped by set.
+    // It is obtained from mtgjson.com. It contains card data keyed by card name.
     private static final String JSON_FILE = "AllPrintings.json";
 
     // Required. Place this file in the INPUT_FOLDER.
@@ -49,6 +49,3 @@ Please make sure the required files are present in the ``INPUT`` folder (see bel
     // This is applies to both the scripts generator and image line batch updater.
     private static final String PREDEFINED_IMAGES_FILE = "CardImages.txt";
 
-    // This file is automatically created in the OUTPUT_FOLDER (for reference only).
-    // list of all set codes from json feed sorted by release date in descending order.
-    private static final String JSON_SETS_FILE = "JsonSetCodes.txt";
